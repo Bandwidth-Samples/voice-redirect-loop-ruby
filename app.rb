@@ -5,22 +5,22 @@ include Bandwidth
 include Bandwidth::Voice
 
 begin
-    BANDWIDTH_USERNAME = ENV.fetch('BANDWIDTH_USERNAME')
-    BANDWIDTH_PASSWORD = ENV.fetch('BANDWIDTH_PASSWORD')
-    BANDWIDTH_ACCOUNT_ID = ENV.fetch('BANDWIDTH_ACCOUNT_ID')
-    BANDWIDTH_VOICE_APPLICATION_ID = ENV.fetch('BANDWIDTH_VOICE_APPLICATION_ID')
-    PORT = ENV.fetch('PORT')
-    BASE_URL = ENV.fetch('BASE_URL')
+    BW_USERNAME = ENV.fetch('BW_USERNAME')
+    BW_PASSWORD = ENV.fetch('BW_PASSWORD')
+    BW_ACCOUNT_ID = ENV.fetch('BW_ACCOUNT_ID')
+    BW_VOICE_APPLICATION_ID = ENV.fetch('BW_VOICE_APPLICATION_ID')
+    LOCAL_PORT = ENV.fetch('LOCAL_PORT')
+    BASE_CALLBACK_URL = ENV.fetch('BASE_CALLBACK_URL')
 rescue
     puts "Please set the environmental variables defined in the README"
     exit(-1)
 end
 
-set :port, PORT
+set :port, LOCAL_PORT
 
 bandwidth_client = Bandwidth::Client.new(
-    voice_basic_auth_user_name: BANDWIDTH_USERNAME,
-    voice_basic_auth_password: BANDWIDTH_PASSWORD
+    voice_basic_auth_user_name: BW_USERNAME,
+    voice_basic_auth_password: BW_PASSWORD
 )
 voice_client = bandwidth_client.voice_client.client
 
@@ -68,8 +68,8 @@ delete '/calls/:call_id' do
 
     if ACTIVE_CALLS.include?(call_id)
         body = ApiModifyCallRequest.new
-        body.redirect_url = BASE_URL + "/callbacks/goodbye"
-        voice_client.modify_call(BANDWIDTH_ACCOUNT_ID, call_id, :body => body)
+        body.redirect_url = BASE_CALLBACK_URL + "/callbacks/goodbye"
+        voice_client.modify_call(BW_ACCOUNT_ID, call_id, :body => body)
 
         ACTIVE_CALLS.delete(call_id)
         return 'deleted %s' % [call_id]
