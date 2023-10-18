@@ -1,84 +1,71 @@
 require 'sinatra'
-require 'bandwidth'
-
-include Bandwidth
-include Bandwidth::Voice
+require 'bandwidth-sdk'
 
 begin
-    BW_USERNAME = ENV.fetch('BW_USERNAME')
-    BW_PASSWORD = ENV.fetch('BW_PASSWORD')
-    BW_ACCOUNT_ID = ENV.fetch('BW_ACCOUNT_ID')
-    BW_VOICE_APPLICATION_ID = ENV.fetch('BW_VOICE_APPLICATION_ID')
-    LOCAL_PORT = ENV.fetch('LOCAL_PORT')
-    BASE_CALLBACK_URL = ENV.fetch('BASE_CALLBACK_URL')
-rescue
-    puts "Please set the environmental variables defined in the README"
-    exit(-1)
+  BW_USERNAME = ENV.fetch('BW_USERNAME')
+  BW_PASSWORD = ENV.fetch('BW_PASSWORD')
+  BW_ACCOUNT_ID = ENV.fetch('BW_ACCOUNT_ID')
+  BW_VOICE_APPLICATION_ID = ENV.fetch('BW_VOICE_APPLICATION_ID')
+  LOCAL_PORT = ENV.fetch('LOCAL_PORT')
+  BASE_CALLBACK_URL = ENV.fetch('BASE_CALLBACK_URL')
+rescue StandardError
+  puts 'Please set the environmental variables defined in the README'
+  exit(-1)
 end
 
 set :port, LOCAL_PORT
 
-bandwidth_client = Bandwidth::Client.new(
-    voice_basic_auth_user_name: BW_USERNAME,
-    voice_basic_auth_password: BW_PASSWORD
-)
-voice_client = bandwidth_client.voice_client.client
+Bandwidth.configure do |config| # Configure Basic Auth
+  config.username = BW_USERNAME
+  config.password = BW_PASSWORD
+end
+set :port, LOCAL_PORT
 
-ACTIVE_CALLS = []
+$active_calls = []
 
-post '/callbacks/inbound' do
-    callback_data = JSON.parse(request.body.read)
+post '/callbacks/inboundCall' do
+  data = JSON.parse(request.body.read)
 
-    if callback_data['eventType'] == 'initiate'
-        ACTIVE_CALLS.append(callback_data['callId'])
-    end
+  $active_calls << data['callId'] if data['eventType'] == 'initiate'
 
-    response = Bandwidth::Voice::Response.new()
-    if callback_data['eventType'] == 'initiate' or callback_data['eventType'] == 'redirect'
-        ring = Bandwidth::Voice::Ring.new({
-            :duration => 30
-        })
-        redirect = Bandwidth::Voice::Redirect.new({
-            :redirect_url => '/callbacks/inbound'
-        })
+  if (data['eventType'] == 'initiate') || (data['eventType'] == 'redirect')
+    speak_sentence = Bandwidth::Bxml::SpeakSentence.new('Redirecting call, please wait.')
+    ring = Bandwidth::Bxml::Ring.new({ duration: 30 })
+    redirect = Bandwidth::Bxml::Redirect.new({ redirect_url: '/callbacks/inboundCall' })
+    response = Bandwidth::Bxml::Response.new([speak_sentence, ring, redirect])
 
-        response.push(ring)
-        response.push(redirect)
-    end
-
-    return response.to_bxml()
+    return response.to_bxml
+  end
 end
 
-post '/callbacks/goodbye' do
-    callback_data = JSON.parse(request.body.read)
-    
-    response = Bandwidth::Voice::Response.new()
-    if callback_data['eventType'] == 'redirect'
-        speak_sentence = Bandwidth::Voice::SpeakSentence.new({
-            :sentence => "The call has been updated. Goodbye"
-        })
-        response.push(speak_sentence)
-    end
+post '/callbacks/callEnded' do
+  data = JSON.parse(request.body.read)
 
-    return response.to_bxml()
+  if data['eventType'] == 'redirect'
+    speak_sentence = Bandwidth::Bxml::SpeakSentence.new('The call has been ended. Goodbye')
+    response = Bandwidth::Bxml::Response.new([speak_sentence])
+    
+    return response.to_bxml
+  end
 end
 
 delete '/calls/:call_id' do
-    call_id = params[:call_id]
+  call_id = params[:call_id]
+  
+  if $active_calls.include?(call_id)
+    call_body = Bandwidth::UpdateCall.new({ redirect_url: "#{BASE_CALLBACK_URL}/callbacks/callEnded" })
+    
+    calls_api_instance = Bandwidth::CallsApi.new
+    calls_api_instance.update_call(BW_ACCOUNT_ID, call_id, call_body)
+    $active_calls.delete(call_id)
 
-    if ACTIVE_CALLS.include?(call_id)
-        body = ApiModifyCallRequest.new
-        body.redirect_url = BASE_CALLBACK_URL + "/callbacks/goodbye"
-        voice_client.modify_call(BW_ACCOUNT_ID, call_id, :body => body)
-
-        ACTIVE_CALLS.delete(call_id)
-        return 'deleted %s' % [call_id]
-    else
-        status 404
-        return 'call not found'
-    end
+    return "call #{call_id} will be ended"
+  else
+    status 404
+    return 'call not found'
+  end
 end
 
-get '/activeCalls' do
-    return ACTIVE_CALLS.to_json()
+get '/calls' do
+  return $active_calls.to_json
 end
